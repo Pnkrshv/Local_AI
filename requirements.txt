@@ -1,0 +1,10 @@
+Used libs:
+    chromadb
+    sentence-transformers
+    pymupdf4llm
+    rank_bm25
+    requests
+    tqdm
+    langchain-text-splitters    
+
+pip install -r requirements.txt
