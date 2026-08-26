@@ -1,6 +1,7 @@
 """
 Финальный чанкинг юридических текстов.
 Понимает Статьи, Главы, Разделы (в т.ч. римские цифры) и Пункты (арабские цифры).
+Исправлена обработка артефактов вида "**Статья 1** ."
 """
 
 import re
@@ -9,7 +10,6 @@ from pathlib import Path
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# Импортируем конфиг, предполагая, что мы в папке src или используем sys.path
 sys.path.append(str(Path(__file__).parent))
 from config import CHUNK_SIZE, CHUNK_OVERLAP, PDF_FOLDER
 
@@ -21,7 +21,16 @@ def find_legal_headers(text: str) -> list[dict]:
     headers = []
     
     # 1. Статья, Глава, Раздел, Приложение
-    p1 = re.compile(r'(?im)^\s*\**\s*(Раздел|Глава|Статья|Приложение)\s+([IVXLC0-9]+(?:[-.][IVXLC0-9]+)*)(?:[.:]|\s+)(.*?)\**\s*$')
+    # Исправлено: разрешаем звёздочки, пробелы, точки и двоеточия после номера
+    p1 = re.compile(
+        r'(?im)^\s*\**\s*'
+        r'(Раздел|Глава|Статья|Приложение)\s+'
+        r'([IVXLC0-9]+(?:[-.][IVXLC0-9]+)*)'  # Номер (арабские или римские)
+        r'\s*\**\s*'                          # Возможные звёздочки и пробелы после номера
+        r'(?:[.:]|\s+)?'                      # Точка или двоеточие (опционально)
+        r'\s*\**\s*'                          # Снова возможные звёздочки/пробелы
+        r'(.*?)\**\s*$'                       # Название
+    )
     for m in p1.finditer(text):
         headers.append({
             "kind": m.group(1).title(),
@@ -31,7 +40,12 @@ def find_legal_headers(text: str) -> list[dict]:
         })
         
     # 2. Римские цифры (I., II., III.) - это Разделы
-    p2 = re.compile(r'(?im)^\s*\**\s*([IVXLC]+)\.\s+(.{5,}?)\**\s*$')
+    # Исправлено: разрешаем звёздочки вокруг
+    p2 = re.compile(
+        r'(?im)^\s*\**\s*'
+        r'([IVXLC]+)\.'
+        r'\s*(.*?)\**\s*$'
+    )
     for m in p2.finditer(text):
         headers.append({
             "kind": "Раздел",
@@ -41,8 +55,11 @@ def find_legal_headers(text: str) -> list[dict]:
         })
         
     # 3. Пункты (1., 2., 12.) - арабские цифры с точкой.
-    # Требуем минимум 10 символов текста после цифры, чтобы отсеять сноски.
-    p3 = re.compile(r'(?im)^\s*\**\s*([0-9]+)\.\s+(.{10,}?)\**\s*$')
+    p3 = re.compile(
+        r'(?im)^\s*\**\s*'
+        r'([0-9]+)\.'
+        r'\s+(.{10,}?)\**\s*$'
+    )
     for m in p3.finditer(text):
         headers.append({
             "kind": "Пункт",
@@ -54,7 +71,7 @@ def find_legal_headers(text: str) -> list[dict]:
     # Сортируем по позиции в тексте
     headers.sort(key=lambda x: x["start"])
     
-    # Убираем дубликаты (если разные регулярки сработали на одну строку)
+    # Убираем дубликаты
     unique_headers = []
     seen_starts = set()
     for h in headers:
@@ -70,7 +87,6 @@ def build_section_string(headers: list[dict]) -> str:
     parts = []
     for h in headers:
         s = f'{h["kind"]} {h["number"]}'
-        # Обрезаем title, чтобы не тащить в метаданные весь текст пункта
         if h["title"]:
             title = h["title"]
             if len(title) > 80:
