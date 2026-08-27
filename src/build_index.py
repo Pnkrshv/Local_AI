@@ -1,30 +1,26 @@
 """
 Индексация юридических документов.
-
 Пайплайн:
 1. Извлечение текста из PDF (extract_pdf)
-2. Юридический чанкинг (chunker)
-3. Вычисление эмбеддингов с префиксом "passage:"
-4. Запись в ChromaDB с метаданными (source, section)
+2. Извлечение текста из DOC/DOCX (extract_docs)
+3. Юридический чанкинг (chunker)
+4. Вычисление эмбеддингов с префиксом "passage:"
+5. Запись в ChromaDB с метаданными (source, section)
 """
-
 import sys
 from pathlib import Path
-
 import chromadb
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
 sys.path.append(str(Path(__file__).parent))
+
 from config import (
-    EMBED_MODEL_NAME,
-    EMBED_PASSAGE_PREFIX,
-    DB_DIR,
-    COLLECTION_NAME,
-    EMBED_BATCH_SIZE,
-    PDF_FOLDER,
+    EMBED_MODEL_NAME, EMBED_PASSAGE_PREFIX, DB_DIR, COLLECTION_NAME,
+    EMBED_BATCH_SIZE, PDF_FOLDER, DOCS_FOLDER,
 )
 from extract_pdf import extract_all_pdfs
+from extract_docs import extract_all_docs  # <-- НОВЫЙ ИМПОРТ
 from chunker import chunk_document
 
 
@@ -34,8 +30,8 @@ def main():
     # ============================================================
     print(f"Загрузка модели эмбеддингов: {EMBED_MODEL_NAME}")
     print("При первом запуске модель скачивается (~2 ГБ), нужен интернет.\n")
-    
     embedder = SentenceTransformer(EMBED_MODEL_NAME)
+
     print(f"Устройство для эмбеддингов: {embedder.device}")
     if str(embedder.device) == "cpu":
         print("⚠️  Внимание: используется CPU. Если есть GPU, эмбеддинги будут медленнее.")
@@ -43,13 +39,30 @@ def main():
         print("✅ Используется GPU — эмбеддинги будут быстрыми.\n")
 
     # ============================================================
-    # 2. Извлечение и чанкинг всех документов
+    # 2. Извлечение и чанкинг ВСЕХ документов (PDF + DOC/DOCX)
     # ============================================================
-    print(f"Извлечение и чанкинг документов из: {PDF_FOLDER}\n")
-    all_pages = extract_all_pdfs(PDF_FOLDER)
+    all_pages = []
+
+    # 2.1. Извлекаем PDF
+    print(f"📂 Извлечение PDF-документов из: {PDF_FOLDER}\n")
+    pdf_pages = extract_all_pdfs(PDF_FOLDER)
+    if pdf_pages:
+        all_pages.extend(pdf_pages)
+        print(f"  ✅ Извлечено страниц из PDF: {len(pdf_pages)}\n")
+    else:
+        print("  ⚠️ PDF-документы не найдены или не удалось извлечь текст.\n")
+
+    # 2.2. Извлекаем DOC/DOCX
+    print(f"📂 Извлечение Word-документов из: {DOCS_FOLDER}\n")
+    doc_pages = extract_all_docs(DOCS_FOLDER)
+    if doc_pages:
+        all_pages.extend(doc_pages)
+        print(f"  ✅ Извлечено 'страниц' из Word: {len(doc_pages)}\n")
+    else:
+        print("  ⚠️ Word-документы не найдены или не удалось извлечь текст.\n")
 
     if not all_pages:
-        print("Не удалось извлечь текст. Проверь папку pdfs/")
+        print("❌ Не удалось извлечь текст ни из одного документа.")
         return
 
     # Группируем страницы по документам
@@ -61,7 +74,7 @@ def main():
     for source, pages in docs_pages.items():
         chunks = chunk_document(pages)
         all_chunks.extend(chunks)
-        print(f"  {source}: {len(chunks)} фрагментов")
+        print(f"  📑 {source}: {len(chunks)} фрагментов")
 
     print(f"\nВсего фрагментов для индексации: {len(all_chunks)}")
 
@@ -72,7 +85,6 @@ def main():
     # ============================================================
     # 3. Подготовка текстов с префиксом "passage:"
     # ============================================================
-    # ВАЖНО: для моделей multilingual-e5 нужен префикс "passage: "
     texts = [EMBED_PASSAGE_PREFIX + c["text"] for c in all_chunks]
     metadatas = [c["metadata"] for c in all_chunks]
     ids = [f"chunk_{i}" for i in range(len(all_chunks))]
@@ -93,11 +105,9 @@ def main():
     # ============================================================
     db_path = Path(DB_DIR)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-
     print(f"\nСохранение в ChromaDB: {db_path}")
     client = chromadb.PersistentClient(path=str(db_path))
 
-    # Удаляем старую коллекцию, если она есть
     try:
         client.delete_collection(COLLECTION_NAME)
         print(f"Старая коллекция '{COLLECTION_NAME}' удалена.")
@@ -106,7 +116,6 @@ def main():
 
     collection = client.create_collection(COLLECTION_NAME)
 
-    # Записываем батчами (у Chroma есть лимит на размер одного запроса)
     write_batch_size = 500
     for i in tqdm(range(0, len(all_chunks), write_batch_size), desc="Запись в БД"):
         end = min(i + write_batch_size, len(all_chunks))

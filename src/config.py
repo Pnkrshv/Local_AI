@@ -16,6 +16,9 @@
 # Папка с PDF-документами
 PDF_FOLDER = "./pdfs"
 
+# Папка с DOC/DOCX-документами (НОВОЕ!)
+DOCS_FOLDER = "./docs"
+
 # Папка для хранения векторной базы Chroma
 DB_DIR = "./data/chroma_db"
 
