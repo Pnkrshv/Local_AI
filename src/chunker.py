@@ -7,6 +7,7 @@
 import re
 import sys
 from pathlib import Path
+from text_normalizer import normalize_legal_text
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -138,7 +139,9 @@ def chunk_document(pages: list[dict]) -> list[dict]:
         return []
 
     source = pages[0]["source"]
+
     full_text = "\n\n".join([p["text"] for p in pages])
+    full_text = normalize_legal_text(full_text)
 
     segments = split_into_legal_segments(full_text)
 

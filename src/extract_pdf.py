@@ -1,5 +1,6 @@
 import os
 import pymupdf4llm
+from text_normalizer import normalize_legal_text
 
 from config import PDF_FOLDER
 
@@ -32,7 +33,7 @@ def extract_text_from_pdf(filepath: str) -> list[dict]:
         
         pages = []
         for i, page_data in enumerate(md_text_pages):
-            text = page_data.get("text", "")
+            text = normalize_legal_text(page_data.get("text", ""))
             if text.strip():
                 pages.append({
                     "page": i + 1,

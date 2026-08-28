@@ -8,6 +8,7 @@ import subprocess
 import shutil
 import tempfile
 from docx import Document
+from text_normalizer import normalize_legal_text
 
 
 def extract_docx(file_path: str) -> list[dict]:
@@ -31,7 +32,7 @@ def extract_docx(file_path: str) -> list[dict]:
     TARGET_PAGE_SIZE = 2000  # Условный размер "страницы"
     
     for para in doc.paragraphs:
-        text = para.text.strip()
+        text = normalize_legal_text(para.text.strip())
         if not text:
             continue
         
@@ -41,7 +42,7 @@ def extract_docx(file_path: str) -> list[dict]:
         if current_len >= TARGET_PAGE_SIZE:
             pages.append({
                 "source": source_name,
-                "text": "\n\n".join(current_text),
+                "text": normalize_legal_text("\n\n".join(current_text)),
                 "page": page_num,
             })
             page_num += 1
@@ -51,7 +52,7 @@ def extract_docx(file_path: str) -> list[dict]:
     if current_text:
         pages.append({
             "source": source_name,
-            "text": "\n\n".join(current_text),
+            "text": normalize_legal_text("\n\n".join(current_text)),
             "page": page_num,
         })
     
@@ -61,16 +62,16 @@ def extract_docx(file_path: str) -> list[dict]:
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
-                    cell_text = cell.text.strip()
+                    cell_text = normalize_legal_text(cell.text.strip())
                     if cell_text:
                         table_text.append(cell_text)
         
         if table_text:
             pages.append({
-                "source": source_name,
-                "text": "\n\n".join(table_text),
-                "page": 1,
-            })
+            "source": source_name,
+            "text": normalize_legal_text("\n\n".join(table_text)),
+            "page": 1,
+        })
     
     print(f"  📄 {source_name}: извлечено {len(pages)} 'страниц'")
     return pages
