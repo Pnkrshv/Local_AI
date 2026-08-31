@@ -1,14 +1,17 @@
 """
 Индексация юридических документов.
+
 Пайплайн:
-1. Извлечение текста из PDF (extract_pdf)
-2. Извлечение текста из DOC/DOCX (extract_docs)
-3. Юридический чанкинг (chunker)
-4. Вычисление эмбеддингов с префиксом "passage:"
-5. Запись в ChromaDB с метаданными (source, section)
+1. Извлечение текста из PDF
+2. Извлечение текста из DOC/DOCX
+3. Юридический чанкинг
+4. Вычисление эмбеддингов
+5. Запись в ChromaDB
 """
+
 import sys
 from pathlib import Path
+
 import chromadb
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
@@ -16,83 +19,66 @@ from tqdm import tqdm
 sys.path.append(str(Path(__file__).parent))
 
 from config import (
-    EMBED_MODEL_NAME, EMBED_PASSAGE_PREFIX, DB_DIR, COLLECTION_NAME,
-    EMBED_BATCH_SIZE, PDF_FOLDER, DOCS_FOLDER,
+    EMBED_MODEL_NAME,
+    EMBED_PASSAGE_PREFIX,
+    DB_DIR,
+    COLLECTION_NAME,
+    EMBED_BATCH_SIZE,
+    PDF_FOLDER,
+    DOCS_FOLDER,
 )
+
 from extract_pdf import extract_all_pdfs
-from extract_docs import extract_all_docs  # <-- НОВЫЙ ИМПОРТ
+from extract_docs import extract_all_docs
 from chunker import chunk_document
 
 
 def main():
-    # ============================================================
-    # 1. Загрузка модели эмбеддингов
-    # ============================================================
     print(f"Загрузка модели эмбеддингов: {EMBED_MODEL_NAME}")
-    print("При первом запуске модель скачивается (~2 ГБ), нужен интернет.\n")
     embedder = SentenceTransformer(EMBED_MODEL_NAME)
 
-    print(f"Устройство для эмбеддингов: {embedder.device}")
-    if str(embedder.device) == "cpu":
-        print("⚠️  Внимание: используется CPU. Если есть GPU, эмбеддинги будут медленнее.")
-    else:
-        print("✅ Используется GPU — эмбеддинги будут быстрыми.\n")
-
-    # ============================================================
-    # 2. Извлечение и чанкинг ВСЕХ документов (PDF + DOC/DOCX)
-    # ============================================================
     all_pages = []
 
-    # 2.1. Извлекаем PDF
-    print(f"📂 Извлечение PDF-документов из: {PDF_FOLDER}\n")
+    print(f"Извлечение PDF-документов из: {PDF_FOLDER}")
     pdf_pages = extract_all_pdfs(PDF_FOLDER)
+
     if pdf_pages:
         all_pages.extend(pdf_pages)
-        print(f"  ✅ Извлечено страниц из PDF: {len(pdf_pages)}\n")
-    else:
-        print("  ⚠️ PDF-документы не найдены или не удалось извлечь текст.\n")
 
-    # 2.2. Извлекаем DOC/DOCX
-    print(f"📂 Извлечение Word-документов из: {DOCS_FOLDER}\n")
+    print(f"Извлечение Word-документов из: {DOCS_FOLDER}")
     doc_pages = extract_all_docs(DOCS_FOLDER)
+
     if doc_pages:
         all_pages.extend(doc_pages)
-        print(f"  ✅ Извлечено 'страниц' из Word: {len(doc_pages)}\n")
-    else:
-        print("  ⚠️ Word-документы не найдены или не удалось извлечь текст.\n")
 
     if not all_pages:
-        print("❌ Не удалось извлечь текст ни из одного документа.")
+        print("Не удалось извлечь текст ни из одного документа.")
         return
 
-    # Группируем страницы по документам
     docs_pages = {}
+
     for p in all_pages:
         docs_pages.setdefault(p["source"], []).append(p)
 
     all_chunks = []
+
     for source, pages in docs_pages.items():
         chunks = chunk_document(pages)
         all_chunks.extend(chunks)
-        print(f"  📑 {source}: {len(chunks)} фрагментов")
+        print(f"  {source}: {len(chunks)} фрагментов")
 
-    print(f"\nВсего фрагментов для индексации: {len(all_chunks)}")
+    print(f"Всего фрагментов для индексации: {len(all_chunks)}")
 
     if not all_chunks:
         print("Нечего индексировать.")
         return
 
-    # ============================================================
-    # 3. Подготовка текстов с префиксом "passage:"
-    # ============================================================
     texts = [EMBED_PASSAGE_PREFIX + c["text"] for c in all_chunks]
     metadatas = [c["metadata"] for c in all_chunks]
     ids = [f"chunk_{i}" for i in range(len(all_chunks))]
 
-    # ============================================================
-    # 4. Вычисление эмбеддингов
-    # ============================================================
-    print("\nВычисление эмбеддингов (может занять некоторое время)...")
+    print("Вычисление эмбеддингов...")
+
     embeddings = embedder.encode(
         texts,
         batch_size=EMBED_BATCH_SIZE,
@@ -100,12 +86,9 @@ def main():
         show_progress_bar=True,
     )
 
-    # ============================================================
-    # 5. Запись в ChromaDB
-    # ============================================================
     db_path = Path(DB_DIR)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"\nСохранение в ChromaDB: {db_path}")
+
     client = chromadb.PersistentClient(path=str(db_path))
 
     try:
@@ -117,8 +100,10 @@ def main():
     collection = client.create_collection(COLLECTION_NAME)
 
     write_batch_size = 500
+
     for i in tqdm(range(0, len(all_chunks), write_batch_size), desc="Запись в БД"):
         end = min(i + write_batch_size, len(all_chunks))
+
         collection.add(
             ids=ids[i:end],
             documents=[c["text"] for c in all_chunks[i:end]],
@@ -126,9 +111,8 @@ def main():
             metadatas=metadatas[i:end],
         )
 
-    print(f"\n✅ Индексация завершена!")
+    print("Индексация завершена.")
     print(f"Всего фрагментов в базе: {collection.count()}")
-    print(f"База сохранена в: {db_path}")
 
 
 if __name__ == "__main__":
