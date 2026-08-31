@@ -7,7 +7,8 @@ FastAPI сервер для юридического RAG-ассистента.
 - обобщенный режим списков и подсчета пунктов;
 - принудительная догрузка целых разделов;
 - программный подсчет пунктов внутри релевантного раздела;
-- разделение режимов ответа: количество / перечень.
+- разделение режимов ответа: количество / перечень;
+- фильтрация некорректных и слишком коротких запросов.
 """
 
 import os
@@ -152,6 +153,28 @@ class ChatRequest(BaseModel):
 # ============================================================
 # 4. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================
+
+def is_valid_question(question: str) -> bool:
+    """
+    Проверяет, является ли запрос корректным и достаточно полным.
+    Отсекает обрывки фраз, слишком короткие запросы и одиночные слова.
+    """
+    q = question.strip()
+    if not q:
+        return False
+    
+    words = q.split()
+    
+    # Меньше 3 слов - обычно не вопрос, а просто термин или обрывок
+    if len(words) < 3:
+        return False
+        
+    # Меньше 15 символов - слишком коротко для осмысленного юридического вопроса
+    if len(q) < 15:
+        return False
+        
+    return True
+
 
 def truncate_text(text: str, max_len: int = 8000) -> str:
     if len(text) <= max_len:
@@ -796,7 +819,15 @@ async def stream_ollama(prompt: str):
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    prompt = await build_prompt(request.question)
+    question = request.question.strip()
+    
+    # ПРОВЕРКА НА ВАЛИДНОСТЬ ЗАПРОСА
+    if not is_valid_question(question):
+        async def invalid_response():
+            yield "Ваш запрос сформулирован некорректно, слишком коротко или содержит опечатки. Пожалуйста, задайте полный и четкий вопрос по нормативно-правовым актам."
+        return StreamingResponse(invalid_response(), media_type="text/plain; charset=utf-8")
+
+    prompt = await build_prompt(question)
 
     async def generate_response():
         async for chunk in stream_ollama(prompt):
